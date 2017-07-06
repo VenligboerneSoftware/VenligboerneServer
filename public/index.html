@@ -15,11 +15,14 @@
     <!-- initialize the SDK after all desired features are loaded -->
     <script defer src="https://test-b5dbd.firebaseapp.com/__/firebase/init.js"></script>
 
+    <!-- Load FirebaseUI for Auth popup -->
+    <script src="https://cdn.firebase.com/libs/firebaseui/2.2.1/firebaseui.js"></script>
+    <link type="text/css" rel="stylesheet" href="https://cdn.firebase.com/libs/firebaseui/2.2.1/firebaseui.css" />
+
     <!--jQuery dependencies-->
-   <link rel="stylesheet"
-       href="//ajax.googleapis.com/ajax/libs/jqueryui/1.9.2/themes/base/jquery-ui.css" />
-   <script src="//ajax.googleapis.com/ajax/libs/jquery/1.8.3/jquery.min.js"></script>    
-   <script src="//ajax.googleapis.com/ajax/libs/jqueryui/1.9.2/jquery-ui.min.js"></script>
+   <link rel="stylesheet" href="https://ajax.googleapis.com/ajax/libs/jqueryui/1.9.2/themes/base/jquery-ui.css" />
+   <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.8.3/jquery.min.js"></script>    
+   <script src="https://ajax.googleapis.com/ajax/libs/jqueryui/1.9.2/jquery-ui.min.js"></script>
    
    <!--ParamQuery Grid files. PQGrid docs: https://paramquery.com/api-->
    <link rel="stylesheet" href="pqgrid.min.css" />
@@ -27,6 +30,7 @@
   </head>
   <body>
     <div style="width: 800px">
+      <div id="firebaseui-auth-container"></div>
       <h2>Welcome to the Internationalization Control Panel</h2>
       <p>
         Here you can edit how the Venligboerne app translates to various languages.
@@ -39,9 +43,11 @@
 
       <p>
         If you want to make more advanced edits, like adding or removing words, or adding
-        and removing languages, click "Download". Open the resulting file (language.txt)
-        with Microsoft Excel. Edit the language table however you want, then save. You may
-        get a warning from Excel. Click "continue". Then come back to this webpage and click
+        and removing languages, click "Download". Open the resulting file (language.xls)
+        with Microsoft Excel. You may get a warning about the file extension not matching.
+        Click "Yes" to continue. Edit the language table however you want. You can 
+        add or remove words or add or remove languages. You may get a warning from Excel 
+        when you save. Click "continue". Then come back to this webpage and click
         "Upload", and select the file you saved. You should see your changes appear here.
         The changes are not yet saved in the database. Review your changes, and once you
         are sure they are correct, click "Save". Your changes should now be visible in the
@@ -55,9 +61,7 @@
     <label for="upload" id='upload_button'>Upload</label>
     <input type="file" id="upload" name="upload" style="display: none" />
 
-    <!--<input type='submit' id='add_button' value='Add Language' />-->
-
-    <a style='display: none' id='download' download='language.txt'>Download</a>
+    <a style='display: none' id='download' download='language.xls'>Download</a>
 
     <div id="grid_array"></div>
 
@@ -68,6 +72,47 @@
       var header;
       var first_entry;
 
+      // initLoginUI
+      // ------------------------------------------------------------------
+      // Initialize the Google login button at the top of the page.
+      // This is used to ensure unauthorized users can't edit language data.
+      function initLoginUI() {
+        // FirebaseUI config.
+        // var uiConfig = {
+        //   signInSuccessUrl: '/',
+        //   signInOptions: [
+        //     firebase.auth.GoogleAuthProvider.PROVIDER_ID
+        //   ]
+        // };
+
+        // // Initialize the FirebaseUI Widget using Firebase.
+        // var ui = new firebaseui.auth.AuthUI(firebase.auth());
+        // // The start method will wait until the DOM is loaded.
+        // ui.start('#firebaseui-auth-container', uiConfig);
+
+        firebase.auth().signInWithPopup(provider).then(function(result) {
+          // This gives you a Google Access Token. You can use it to access the Google API.
+          var token = result.credential.accessToken;
+          // The signed-in user info.
+          var user = result.user;
+          // ...
+        }).catch(function(error) {
+          // Handle Errors here.
+          var errorCode = error.code;
+          var errorMessage = error.message;
+          // The email of the user's account used.
+          var email = error.email;
+          // The firebase.auth.AuthCredential type that was used.
+          var credential = error.credential;
+          // ...
+        });
+      }
+
+      // initGridWithContents
+      // -------------------------------------------------------------------
+      // Turn the DOM element specified in the "grid" global, and turn it into
+      // a PqGrid table with the given data and column titles from the "header"
+      // global.
       function initGridWithContents(data) {
         var obj = {
           width: "100%",
@@ -83,19 +128,31 @@
         grid.pqGrid(obj);
       }
 
+      // loadTableContents
+      // -------------------------------------------------------------------
+      // Pulls the language data from the database and calls initGridWithContents
+      // with that data.
       function loadTableContents() {
         firebase.database().ref("language").once('value', snapshot => {
           let lang = snapshot.val();
-          header = ["Name"].concat(Object.keys(lang[Object.keys(lang)[0]]));
+          header = ["Key"].concat(Object.keys(lang[Object.keys(lang)[0]]));
           first_entry = Object.keys(lang)[0];
           var rows = [];
           for (prop in lang) {
             rows.push([prop].concat(Object.values(lang[prop])));
           }
           initGridWithContents(rows);
+        }, function(error) {
+          // Only show the login dialog if the user doesn't already have access.
+          console.error("Loading data failed", error);
+          alert("You be logged into an administrator account to edit language data.");
+          initLoginUI();
         });
       }
 
+      // getTableContents
+      // -------------------------------------------------------------------
+      // Returns a 2D array containing the contents of the table.
       function getTableContents() {
         range = [];
         for (var i = 0; i < header.length; i++) range.push(i);
@@ -108,14 +165,9 @@
         return data;
       }
 
-      function getDownload() {
-        data = getTableContents();
-        data = $.map(data, function(value, index) {
-            return value.join(col_sep);
-        });
-        return header.join(col_sep) + row_sep + data.join(row_sep);
-      }
-
+      // saveTableContents
+      // -------------------------------------------------------------------
+      // Grab the contents of the PQGrid table and save them to Firebase.
       function saveTableContents() {
         data = getTableContents();
         json = {};
@@ -127,10 +179,60 @@
           }
           json[row[0]] = row_json;
         }
-        firebase.database().ref("language").set(json);
+        try {
+          firebase.database().ref("language").set(json, function(error) {
+            if (error != null) {
+              console.error(error);
+              alert("Write to database failed: " + error);
+            }
+          });
+        } catch (e) {
+          console.log(e);
+          alert(e);
+        }
       }
 
-      function handleFileSelect(evt) {
+      String.prototype.lpad = function(padString, length) {
+        var str = this;
+        while (str.length < length)
+            str = padString + str;
+        return str;
+      }
+
+      // triggerDownload
+      // -------------------------------------------------------------------
+      // Starts a download to the user of the contents of the table, in tab
+      // separated value format. The output encoding is UTF-16.
+      function triggerDownload() {
+        data = getTableContents();
+        data = $.map(data, function(value, index) {
+            return value.join(col_sep);
+        });
+        
+        download = header.join(col_sep) + row_sep + data.join(row_sep);
+
+        // Change character encoding to UTF-16 manually, and URI encode it
+        // encodeURIComponent only outputs UTF-8
+        var utf16_download = "";
+        for (var i = 0; i < download.length; i++) {
+          var char = download.charCodeAt(i)
+          var big = char >> 8;
+          var little = char & 0xff;
+          utf16_download += "%" + little.toString(16).lpad("0", 2) + "%" + big.toString(16).lpad("0", 2);
+        }
+
+        // The %FF%FE is a BOM (Byte Order Mark)
+        uriContent = "data:text/plain;charset=UTF-16,%FF%FE" + utf16_download;
+        $('#download').attr('href', uriContent)[0].click();
+
+        // This used to produce garbled files. This StackOverflow post has relevant info
+        // https://stackoverflow.com/questions/6002256/is-it-possible-to-force-excel-recognize-utf-8-csv-files-automatically/6002338#6002338
+      }
+
+      // processUpload
+      // -------------------------------------------------------------------
+      // 
+      function processUpload(evt) {
         var file = evt.target.files[0]; // User uploaded file handle
 
         var reader = new FileReader();
@@ -140,56 +242,53 @@
           return function(e) {
             var contents = e.target.result;
             console.log(contents);
-            contents = $.map(contents.split(row_sep), function(value, index) {
-              return [value.split(col_sep)];
+            contents = contents.split(row_sep);
+            // Filter out blank lines
+            contents = contents.filter(function(str) {
+              return str.replace(/\s/g, '').length > 0;
             });
+
+            // Split up the rows and check for empty keys
+            var hasBlankKey = false;
+            contents = $.map(contents, function(value, index) {
+              var row = value.split(col_sep);
+              if (row[0].length == 0) {
+                hasBlankKey = true;
+              }
+              return [row];
+            });
+            
             console.log(contents);
+
+            // Push the data back into the table view
             grid.pqGrid("destroy");
             header = contents[0];
             initGridWithContents(contents.slice(1));
+
+            if (hasBlankKey) {
+              alert("Warning: Every row must have a key. This is how the app refers to the word or phrase in code.");
+            }
           };
         })(file);
 
         reader.readAsText(file);
       }
 
+      // This is the code entry point. This is JQuery shorthand for
+      // "once the page is loaded, call this function".
       $(function(){
           loadTableContents();
 
           $('#download_button').button().click(function() {
-            var download = getDownload();
-
-            // Change character encoding to UTF-16 manually
-            // encodeURIComponent only outputs UTF-8
-            var utf16_download = "";
-            for (var i = 0; i < download.length; i++) {
-              var char = download.charCodeAt(i)
-              var big = char >> 8;
-              var little = char & 0xff;
-              utf16_download += String.fromCharCode(little) + String.fromCharCode(big);
-            }
-            // The %FE%FF is a BOM (Byte Order Mark)
-            uriContent = "data:text/plain;charset=UTF-16,%FE%FF" + encodeURIComponent(utf16_download);
-            $('#download').attr('href', uriContent)[0].click();
-            // This used to produce garbled files
-            // https://stackoverflow.com/questions/6002256/is-it-possible-to-force-excel-recognize-utf-8-csv-files-automatically/6002338#6002338
+            triggerDownload();
           });
-
-          document.getElementById('upload').addEventListener('change', handleFileSelect, false);
 
           $('#save_button').button().click(function() {
             saveTableContents();
           });
 
           $('#upload_button').button();
-
-          // $('#add_button').click(function() {
-          //   console.log("Adding language");
-          //   firebase.database().ref("language/" + first_entry + "/" + prompt("What langauge would you like to add?")).set("");
-          //   // TODO this will destroy previous edits
-          //   grid.pqGrid("destroy");
-          //   loadTableContents();
-          // });
+          document.getElementById('upload').addEventListener('change', processUpload, false);
       });
     </script>
   </body>
