@@ -1,0 +1,8 @@
+This is the code that gets pushed to Firebase (aka Firebaes) to run any server side functionality we need. The docs are at https://firebase.google.com/docs/hosting/. To work on the server,
+
+1 Clone this repo
+2 Install firebase-tools (npm install -g firebase-tools)
+3 Login to the venligboerneapp@gmail.com account for Firebase dev (firebase login)
+4 Push to the server (firebase deploy)
+
+Alternatively, you can test locally just by opening index.hmtl in Chrome. This is faster than deploying every time.
