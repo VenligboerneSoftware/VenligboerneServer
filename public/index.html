@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Internationalization</title>
+
+    <!-- update the version number as needed -->
+    <script defer src="https://test-b5dbd.firebaseapp.com/__/firebase/4.1.3/firebase-app.js"></script>
+    <!-- include only the Firebase features as you need -->
+    <script defer src="https://test-b5dbd.firebaseapp.com/__/firebase/4.1.3/firebase-auth.js"></script>
+    <script defer src="https://test-b5dbd.firebaseapp.com/__/firebase/4.1.3/firebase-database.js"></script>
+    <script defer src="https://test-b5dbd.firebaseapp.com/__/firebase/4.1.3/firebase-messaging.js"></script>
+    <script defer src="https://test-b5dbd.firebaseapp.com/__/firebase/4.1.3/firebase-storage.js"></script>
+    <!-- initialize the SDK after all desired features are loaded -->
+    <script defer src="https://test-b5dbd.firebaseapp.com/__/firebase/init.js"></script>
+
+    <!--jQuery dependencies-->
+   <link rel="stylesheet"
+       href="//ajax.googleapis.com/ajax/libs/jqueryui/1.9.2/themes/base/jquery-ui.css" />
+   <script src="//ajax.googleapis.com/ajax/libs/jquery/1.8.3/jquery.min.js"></script>    
+   <script src="//ajax.googleapis.com/ajax/libs/jqueryui/1.9.2/jquery-ui.min.js"></script>
+   
+   <!--ParamQuery Grid files. PQGrid docs: https://paramquery.com/api-->
+   <link rel="stylesheet" href="pqgrid.min.css" />
+   <script type="text/javascript" src="pqgrid.min.js" ></script>  
+  </head>
+  <body>
+    <div style="width: 800px">
+      <h2>Welcome to the Internationalization Control Panel</h2>
+      <p>
+        Here you can edit how the Venligboerne app translates to various languages.
+        Using the table presented here, you can make basic edit existing entries. The
+        changes will not saved permanently (or visible in the app) until you click
+        "Save". Be careful when saving changes - there is now way to g back
+        to earlier versions. If you are not sure what you're about to do is safe,
+        click "Download" to save the old data to your computer.
+      </p>
+
+      <p>
+        If you want to make more advanced edits, like adding or removing words, or adding
+        and removing languages, click "Download". Open the resulting file (language.txt)
+        with Microsoft Excel. Edit the language table however you want, then save. You may
+        get a warning from Excel. Click "continue". Then come back to this webpage and click
+        "Upload", and select the file you saved. You should see your changes appear here.
+        The changes are not yet saved in the database. Review your changes, and once you
+        are sure they are correct, click "Save". Your changes should now be visible in the
+        app.
+      </p>
+    </div>
+    
+    <input type='submit' id='save_button' value='Save' />
+    <input type='submit' id='download_button' value='Download' />
+
+    <label for="upload" id='upload_button'>Upload</label>
+    <input type="file" id="upload" name="upload" style="display: none" />
+
+    <!--<input type='submit' id='add_button' value='Add Language' />-->
+
+    <a style='display: none' id='download' download='language.txt'>Download</a>
+
+    <div id="grid_array"></div>
+
+    <script>
+      const grid = $("#grid_array");
+      const row_sep = "\r\n";
+      const col_sep = "\t";
+      var header;
+      var first_entry;
+
+      function initGridWithContents(data) {
+        var obj = {
+          width: "100%",
+          height: 500,
+          colModel: header.map((val) => {
+            return {title: val, width: 100, dataType: 'string'};
+          }),
+          dataModel: {data: data},
+          collapsible: false,
+          showTop: false
+        };
+        console.log(obj);
+        grid.pqGrid(obj);
+      }
+
+      function loadTableContents() {
+        firebase.database().ref("language").once('value', snapshot => {
+          let lang = snapshot.val();
+          header = ["Name"].concat(Object.keys(lang[Object.keys(lang)[0]]));
+          first_entry = Object.keys(lang)[0];
+          var rows = [];
+          for (prop in lang) {
+            rows.push([prop].concat(Object.values(lang[prop])));
+          }
+          initGridWithContents(rows);
+        });
+      }
+
+      function getTableContents() {
+        range = [];
+        for (var i = 0; i < header.length; i++) range.push(i);
+        data = grid.pqGrid("getData", {dataIndx: range});
+        for (var i = 0; i < data.length; i++) {
+          data[i] = $.map(data[i], function(value, index) {
+              return [value];
+          });
+        }
+        return data;
+      }
+
+      function getDownload() {
+        data = getTableContents();
+        data = $.map(data, function(value, index) {
+            return value.join(col_sep);
+        });
+        return header.join(col_sep) + row_sep + data.join(row_sep);
+      }
+
+      function saveTableContents() {
+        data = getTableContents();
+        json = {};
+        for (var i = 0; i < data.length; i++) {
+          var row = data[i];
+          var row_json = {};
+          for (var j = 1; j < row.length; j++) {
+            row_json[header[j]] = row[j];
+          }
+          json[row[0]] = row_json;
+        }
+        firebase.database().ref("language").set(json);
+      }
+
+      function handleFileSelect(evt) {
+        var file = evt.target.files[0]; // User uploaded file handle
+
+        var reader = new FileReader();
+
+        // Closure to capture the file information.
+        reader.onload = (function(theFile) {
+          return function(e) {
+            var contents = e.target.result;
+            console.log(contents);
+            contents = $.map(contents.split(row_sep), function(value, index) {
+              return [value.split(col_sep)];
+            });
+            console.log(contents);
+            grid.pqGrid("destroy");
+            header = contents[0];
+            initGridWithContents(contents.slice(1));
+          };
+        })(file);
+
+        reader.readAsText(file);
+      }
+
+      $(function(){
+          loadTableContents();
+
+          $('#download_button').button().click(function() {
+            var download = getDownload();
+
+            // Change character encoding to UTF-16 manually
+            // encodeURIComponent only outputs UTF-8
+            var utf16_download = "";
+            for (var i = 0; i < download.length; i++) {
+              var char = download.charCodeAt(i)
+              var big = char >> 8;
+              var little = char & 0xff;
+              utf16_download += String.fromCharCode(little) + String.fromCharCode(big);
+            }
+            // The %FE%FF is a BOM (Byte Order Mark)
+            uriContent = "data:text/plain;charset=UTF-16,%FE%FF" + encodeURIComponent(utf16_download);
+            $('#download').attr('href', uriContent)[0].click();
+            // This used to produce garbled files
+            // https://stackoverflow.com/questions/6002256/is-it-possible-to-force-excel-recognize-utf-8-csv-files-automatically/6002338#6002338
+          });
+
+          document.getElementById('upload').addEventListener('change', handleFileSelect, false);
+
+          $('#save_button').button().click(function() {
+            saveTableContents();
+          });
+
+          $('#upload_button').button();
+
+          // $('#add_button').click(function() {
+          //   console.log("Adding language");
+          //   firebase.database().ref("language/" + first_entry + "/" + prompt("What langauge would you like to add?")).set("");
+          //   // TODO this will destroy previous edits
+          //   grid.pqGrid("destroy");
+          //   loadTableContents();
+          // });
+      });
+    </script>
+  </body>
+</html>
