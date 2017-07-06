@@ -29,8 +29,7 @@
    <script type="text/javascript" src="pqgrid.min.js" ></script>  
   </head>
   <body>
-    <div style="width: 800px">
-      <div id="firebaseui-auth-container"></div>
+    <div style="max-width: 800px">
       <h2>Welcome to the Internationalization Control Panel</h2>
       <p>
         Here you can edit how the Venligboerne app translates to various languages.
@@ -74,37 +73,18 @@
 
       // initLoginUI
       // ------------------------------------------------------------------
-      // Initialize the Google login button at the top of the page.
-      // This is used to ensure unauthorized users can't edit language data.
-      function initLoginUI() {
-        // FirebaseUI config.
-        // var uiConfig = {
-        //   signInSuccessUrl: '/',
-        //   signInOptions: [
-        //     firebase.auth.GoogleAuthProvider.PROVIDER_ID
-        //   ]
-        // };
-
-        // // Initialize the FirebaseUI Widget using Firebase.
-        // var ui = new firebaseui.auth.AuthUI(firebase.auth());
-        // // The start method will wait until the DOM is loaded.
-        // ui.start('#firebaseui-auth-container', uiConfig);
-
-        firebase.auth().signInWithPopup(provider).then(function(result) {
-          // This gives you a Google Access Token. You can use it to access the Google API.
-          var token = result.credential.accessToken;
-          // The signed-in user info.
-          var user = result.user;
-          // ...
+      // Redirect the user to the Google sign in page.
+      function signin() {
+        var provider = new firebase.auth.GoogleAuthProvider();
+        provider.setCustomParameters({
+          prompt: 'select_account'
+        });
+        firebase.auth().signInWithRedirect(provider);
+        firebase.auth().getRedirectResult().then(function(result) {
+          console.log(result);
         }).catch(function(error) {
-          // Handle Errors here.
-          var errorCode = error.code;
-          var errorMessage = error.message;
-          // The email of the user's account used.
-          var email = error.email;
-          // The firebase.auth.AuthCredential type that was used.
-          var credential = error.credential;
-          // ...
+          alert("Sign in failed: " + error);
+          console.error(error);
         });
       }
 
@@ -131,7 +111,8 @@
       // loadTableContents
       // -------------------------------------------------------------------
       // Pulls the language data from the database and calls initGridWithContents
-      // with that data.
+      // with that data. If the user is not logged into an authorized account,
+      // this redirects to the Google login page.
       function loadTableContents() {
         firebase.database().ref("language").once('value', snapshot => {
           let lang = snapshot.val();
@@ -143,10 +124,9 @@
           }
           initGridWithContents(rows);
         }, function(error) {
-          // Only show the login dialog if the user doesn't already have access.
+          // If the user doesn't have access, send them to the Google sign in page
           console.error("Loading data failed", error);
-          alert("You be logged into an administrator account to edit language data.");
-          initLoginUI();
+          signin();
         });
       }
 
@@ -192,6 +172,7 @@
         }
       }
 
+      // Function to pad a string on the left. Used for zero padding hex values in triggerDownload.
       String.prototype.lpad = function(padString, length) {
         var str = this;
         while (str.length < length)
@@ -231,7 +212,9 @@
 
       // processUpload
       // -------------------------------------------------------------------
-      // 
+      // When the user picks a file to upload, this function reads the contents
+      // of the file, parses them, and displays them in the table. It does NOT
+      // save the data to the database.
       function processUpload(evt) {
         var file = evt.target.files[0]; // User uploaded file handle
 
