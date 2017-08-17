@@ -1,5 +1,7 @@
-const functions = require('firebase-functions');
 const firebase = require('firebase-admin');
+const functions = require('firebase-functions');
+const geolib = require('geolib');
+
 firebase.initializeApp(functions.config().firebase);
 
 // This is an automatic maintence script that deletes posts which have
@@ -8,41 +10,67 @@ firebase.initializeApp(functions.config().firebase);
 // If a post has a scheduled date, it is deleted 3 days after that date.
 // If a post has no scheduled date, it is deleted 30 days after creation.
 exports.clearOldPosts = functions.https.onRequest((request, response) => {
+	response.send('Clearing old posts...');
 	const ONE_DAY = 24 * 60 * 60 * 1000;
 
 	firebase.database().ref('posts').once('value', snap => {
 		snap.forEach(post => {
-			response.write(
-				post.key + ', ' + post.val().datetime + ', ' + post.val().creationTime
-			);
+			console.log(post.key, post.val().datetime, post.val().creationTime);
 			if (post.val().datetime) {
 				if (Date.now() - post.val().datetime > ONE_DAY * 3) {
-					response.write('  This should be deleted (already happened)');
-					deletePost(post.key);
+					console.log(post.key, 'This should be deleted (already happened)');
+					deletePost(post);
 				}
 			} else if (post.val().creationTime) {
 				if (Date.now() - post.val().creationTime > ONE_DAY * 30) {
-					response.write('  This should be deleted (too old)');
-					deletePost(post.key);
+					console.log(post.key, 'This should be deleted (too old)');
+					deletePost(post);
 				}
 			} else {
-				response.write(
-					'  This post has no datetime or creationTime. Should it be deleted?'
+				console.log(
+					post.key,
+					'This post has no datetime or creationTime. Should it be deleted?'
 				);
 			}
-
-			response.write('\n');
 		});
-		response.end();
 	});
 });
 
-function deletePost(id) {
-	// TODO delete the post, all of its applications, and all references to the
-	// applications in their applicants' user objects
+// Delete the post, all of its applications, and all references to the
+// applications in their applicants' user objects
+function deletePost(post) {
+	if (post.hasChild('applications')) {
+		Object.keys(post.val().applications).forEach(function(key) {
+			firebase
+				.database()
+				.ref('applications')
+				.child(key)
+				.once('value')
+				.then(function(snapshot) {
+					const applicant = snapshot.val().applicant;
+					console.log('remove application', key);
+					// Remove the application
+					firebase.database().ref('applications').child(key).remove();
+
+					console.log('remove user index', applicant, key);
+					// Remove the user index to the application
+					firebase
+						.database()
+						.ref('users')
+						.child(applicant)
+						.child('applications')
+						.child(key)
+						.remove();
+				});
+		});
+	}
+	console.log('remove post ' + post.key + '\n');
+	post.ref.remove();
 }
 
 exports.refreshIndices = functions.https.onRequest((request, response) => {
+	response.send('Refreshing indices...');
+
 	// Clear old indices
 	firebase.database().ref('posts').on('child_added', snap => {
 		snap.ref.child('applications').remove();
@@ -57,7 +85,7 @@ exports.refreshIndices = functions.https.onRequest((request, response) => {
 		const key = applicationSnap.key;
 		let application = applicationSnap.val();
 		if (!application.post) {
-			response.write(
+			console.log(
 				'Incomplete application: ' + JSON.stringify(application) + '\n'
 			);
 			// Incomplete application. Remove it.
@@ -86,25 +114,57 @@ exports.refreshIndices = functions.https.onRequest((request, response) => {
 						'posts/' + application.post + '/applications/' + key
 					] = true;
 
-					response.write(
-						'Adding new application and indices: ' +
-							JSON.stringify(updatePacket) +
-							'\n'
-					);
+					console.log('Adding new application and indices', updatePacket);
 					firebase.database().ref().update(updatePacket);
 				}
 			});
 	});
-
-	setTimeout(function() {
-		response.end();
-	}, 10000);
 });
 
 exports.getSubscribers = functions.https.onRequest((request, response) => {
 	response.write(
 		'You want the subscribers for the application: ' + JSON.stringify(request)
 	);
-
-	response.end();
+	const newPost = response.body;
+	firebase
+		.database()
+		.ref('subscriptions')
+		.orderByChild('icon')
+		.equalTo(newPost.category)
+		.once('value', subs => {
+			response.write('Loaded subscriptions ' + JSON.stringify(subs.val()));
+			Promise.all(
+				Object.values(subs.val()).map(sub => {
+					response.write('Checking sub ' + JSON.stringify(sub));
+					// Get the push token if the subscription covers this post
+					// Otherwise return null
+					if (geolib.getDistance(sub, newPost) < sub.radius * 1000) {
+						return firebase
+							.database()
+							.ref('users')
+							.child(sub.owner)
+							.child('pushToken')
+							.once('value');
+					}
+					return null;
+				})
+			).then(tokens => {
+				tokens = tokens
+					.filter(token => token !== null)
+					.map(token => token.val());
+				if (tokens.length > 0) {
+					// Notify all of the users who match the subscription
+					response.write(
+						'Notifying ' +
+							JSON.stringify(tokens) +
+							' of this new post ' +
+							JSON.stringify(newPost)
+					);
+					pushNotify(tokens, 'New post!', {
+						url: '+post/' + newPost.key
+					});
+				}
+				response.end();
+			});
+		});
 });
