@@ -122,49 +122,40 @@ exports.refreshIndices = functions.https.onRequest((request, response) => {
 });
 
 exports.getSubscribers = functions.https.onRequest((request, response) => {
-	response.write(
-		'You want the subscribers for the application: ' + JSON.stringify(request)
-	);
-	const newPost = response.body;
+	console.log('request', request.body);
+	const newPost = request.body;
 	firebase
 		.database()
 		.ref('subscriptions')
 		.orderByChild('icon')
 		.equalTo(newPost.category)
 		.once('value', subs => {
-			response.write('Loaded subscriptions ' + JSON.stringify(subs.val()));
-			Promise.all(
-				Object.values(subs.val()).map(sub => {
-					response.write('Checking sub ' + JSON.stringify(sub));
-					// Get the push token if the subscription covers this post
-					// Otherwise return null
-					if (geolib.getDistance(sub, newPost) < sub.radius * 1000) {
-						return firebase
+			subs = subs.val();
+			console.log('Loaded subscriptions ', subs);
+			let tokens = [];
+			for (const key in subs) {
+				const sub = subs[key];
+				console.log('Checking sub', sub);
+				// Get the push token if the subscription covers this post
+				// Otherwise return null
+				if (geolib.getDistance(sub, newPost) < sub.radius * 1000) {
+					tokens.push(
+						firebase
 							.database()
 							.ref('users')
 							.child(sub.owner)
 							.child('pushToken')
-							.once('value');
-					}
-					return null;
-				})
-			).then(tokens => {
-				tokens = tokens
-					.filter(token => token !== null)
-					.map(token => token.val());
-				if (tokens.length > 0) {
-					// Notify all of the users who match the subscription
-					response.write(
-						'Notifying ' +
-							JSON.stringify(tokens) +
-							' of this new post ' +
-							JSON.stringify(newPost)
+							.once('value')
 					);
-					pushNotify(tokens, 'New post!', {
-						url: '+post/' + newPost.key
-					});
 				}
-				response.end();
+			}
+
+			Promise.all(tokens).then(tokens => {
+				tokens = tokens.map(token => token.val());
+
+				// Notify all of the users who match the subscription
+				console.log('Notifying ', tokens, ' of this new post ', newPost);
+				response.send(JSON.stringify(tokens));
 			});
 		});
 });
