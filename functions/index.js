@@ -15,9 +15,11 @@ exports.clearOldPosts = functions.https.onRequest((request, response) => {
 
 	firebase.database().ref('posts').once('value', snap => {
 		snap.forEach(post => {
-			console.log(post.key, post.val().datetime, post.val().creationTime);
-			if (post.val().datetime) {
-				if (Date.now() - post.val().datetime > ONE_DAY * 3) {
+			console.log(post.key, post.val().dates, post.val().creationTime);
+			if (post.val().dates) {
+				const lastDate = Math.max.apply(null, post.val().dates);
+				console.log('Latest date', lastDate);
+				if (Date.now() - lastDate > ONE_DAY * 3) {
 					console.log(post.key, 'This should be deleted (already happened)');
 					deletePost(post);
 				}
@@ -29,7 +31,7 @@ exports.clearOldPosts = functions.https.onRequest((request, response) => {
 			} else {
 				console.log(
 					post.key,
-					'This post has no datetime or creationTime. Should it be deleted?'
+					'This post has no dates or creationTime. Should it be deleted?'
 				);
 			}
 		});
