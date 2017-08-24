@@ -124,40 +124,47 @@ exports.refreshIndices = functions.https.onRequest((request, response) => {
 });
 
 exports.getSubscribers = functions.https.onRequest((request, response) => {
-	console.log('request', request.body);
-	const newPost = request.body;
-	firebase
-		.database()
-		.ref('subscriptions')
-		.orderByChild('icon')
-		.equalTo(newPost.category)
-		.once('value', subs => {
-			subs = subs.val();
-			console.log('Loaded subscriptions ', subs);
-			let tokens = [];
-			for (const key in subs) {
-				const sub = subs[key];
-				console.log('Checking sub', sub);
+	const params = JSON.parse(request.body);
+	const newPost = params.post;
+	const userID = params.userID;
+	console.log('request', newPost, userID);
+	firebase.database().ref('subscriptions').once('value', subs => {
+		console.log('Loaded subscriptions ', subs.val());
+		let tokens = [];
+		// Iterate over each user
+		subs.forEach(userSubs => {
+			// For each user, iterate over their subscriptions
+			userSubs.forEach(subscription => {
+				const sub = subscription.val();
+				console.log('Checking sub', sub, newPost);
 				// Get the push token if the subscription covers this post
 				// Otherwise return null
-				if (geolib.getDistance(sub, newPost) < sub.radius * 1000) {
+				if (
+					geolib.getDistance(sub, newPost) < sub.radius * 1000 &&
+					sub.icon === newPost.icon &&
+					userSubs.key !== userID // Don't let users notify themselves
+				) {
+					console.log('This subscription meets criteria', sub);
 					tokens.push(
 						firebase
 							.database()
 							.ref('users')
-							.child(sub.owner)
+							.child(userSubs.key)
 							.child('pushToken')
 							.once('value')
 					);
 				}
-			}
-
-			Promise.all(tokens).then(tokens => {
-				tokens = tokens.map(token => token.val());
-
-				// Notify all of the users who match the subscription
-				console.log('Notifying ', tokens, ' of this new post ', newPost);
-				response.send(JSON.stringify(tokens));
 			});
 		});
+
+		Promise.all(tokens).then(tokens => {
+			tokens = tokens.map(token => token.val());
+
+			// Notify all of the users who match the subscription
+			console.log('Notifying ', tokens, ' of this new post ', newPost);
+			// TODO notify directly from server instead of returning to client
+			// Requires Blaze plan
+			response.send(JSON.stringify(tokens));
+		});
+	});
 });
