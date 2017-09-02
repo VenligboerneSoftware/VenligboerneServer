@@ -71,56 +71,62 @@ function deletePost(post) {
 }
 
 exports.refreshIndices = functions.https.onRequest((request, response) => {
-	response.send('Refreshing indices...');
-
 	// Clear old indices
-	firebase.database().ref('posts').on('child_added', snap => {
-		snap.ref.child('applications').remove();
+	console.log('Clearing post indices');
+	firebase.database().ref('posts').once('value', snap => {
+		snap.forEach(post => {
+			post.ref.child('applications').remove();
+		});
 	});
 
-	firebase.database().ref('users').on('child_added', snap => {
-		snap.ref.child('applications').remove();
+	console.log('Clearing user indices');
+	firebase.database().ref('users').once('value', snap => {
+		snap.forEach(user => {
+			user.ref.child('applications').remove();
+		});
 	});
 
 	// Add new indices
-	firebase.database().ref('applications').on('child_added', applicationSnap => {
-		const key = applicationSnap.key;
-		let application = applicationSnap.val();
-		if (!application.post) {
-			console.log(
-				'Incomplete application: ' + JSON.stringify(application) + '\n'
-			);
-			// Incomplete application. Remove it.
-			applicationSnap.ref.remove();
-			return;
-		}
+	console.log('Regenerating indices');
+	firebase.database().ref('applications').on('value', applications => {
+		applications.forEach(applicationSnap => {
+			const key = applicationSnap.key;
+			let application = applicationSnap.val();
+			if (!application.post) {
+				console.log('Incomplete application', application);
+				// Incomplete application. Remove it.
+				applicationSnap.ref.remove();
+				return;
+			}
 
-		firebase
-			.database()
-			.ref('posts')
-			.child(application.post)
-			.once('value', snap => {
-				if (!snap.exists()) {
-					// The post this application was to is gone. Delete the application
-					applicationSnap.ref.remove();
-				} else {
-					let updatePacket = {};
+			firebase
+				.database()
+				.ref('posts')
+				.child(application.post)
+				.once('value', snap => {
+					if (!snap.exists()) {
+						// The post this application was to is gone. Delete the application
+						applicationSnap.ref.remove();
+					} else {
+						let updatePacket = {};
 
-					// Add the application's ID to the user who is submitting it
-					updatePacket[
-						'users/' + application.applicant + '/applications/' + key
-					] = true;
+						// Add the application's ID to the user who is submitting it
+						updatePacket[
+							'users/' + application.applicant + '/applications/' + key
+						] = true;
 
-					// Add the application's ID to the post it is being submitted on
-					updatePacket[
-						'posts/' + application.post + '/applications/' + key
-					] = true;
+						// Add the application's ID to the post it is being submitted on
+						updatePacket[
+							'posts/' + application.post + '/applications/' + key
+						] = true;
 
-					console.log('Adding new application and indices', updatePacket);
-					firebase.database().ref().update(updatePacket);
-				}
-			});
+						console.log('Adding new application and indices', updatePacket);
+						firebase.database().ref().update(updatePacket);
+					}
+				});
+		});
 	});
+	response.send('Refreshed indices');
 });
 
 exports.getSubscribers = functions.https.onRequest((request, response) => {
